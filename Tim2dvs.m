@@ -31,6 +31,13 @@ count = length(output_files) + 1;
 edge_method = 'Sobel';
 edge_thresh = 0.12;
 
+% Parameters for the creation of the extra images, rotated and translated
+extra_px = 5;
+trans_step = 5;
+angle_min = -90;
+angle_max = 90;
+angle_step = 30;
+
 for jj=1:size(folders, 1)
     % For each gesture, we get just the first recording
     curr_folder = [main_folder, folders{jj}, '/'];
@@ -58,9 +65,15 @@ for jj=1:size(folders, 1)
         % We apply the conversion
         dvs_output = img2dvs(img, output_l, edge_method, edge_thresh, false);
         
-        % And save the file
-        output_filename = sprintf('%simg_%06d.%s', output_img_folder, count, output_format)
-        imwrite(dvs_output, output_filename)
-        count = count +1;
+        % Next, we modify the obtained image by rotating and translating it
+        extra_imgs = imrotate_and_translate(dvs_output, extra_px, trans_step, angle_min, angle_max, angle_step);
+        
+        % And save the files
+        for kk = 1:length(extra_imgs)
+            output_filename = sprintf('%simg_%06d.%s', output_img_folder, count, output_format)
+            % We write binary images
+            imwrite(extra_imgs{kk}>0, output_filename)
+            count = count +1;
+        end
     end
 end
