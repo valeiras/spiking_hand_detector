@@ -17,8 +17,13 @@ function [dvs_output] = img2dvs(img_input, output_l, edge_method, edge_thresh, p
 % square). We make the biggest side equal to output_l
 scale = output_l/max(size(img_input));
 
+% We get the desired number of rows and columns
+s = round(scale*size(img_input));
+h = s(1);
+w = s(2);
+
 % We make the scaling of the image first, and normalize it
-scale_img = imnormalize(imresize(img_input, scale, 'bicubic'));
+scale_img = imnormalize(imresize(img_input, [h, w], 'bicubic'));
 
 % And then extract the edges
 scale_edges = edge(scale_img, edge_method, edge_thresh);
@@ -27,15 +32,10 @@ scale_edges = edge(scale_img, edge_method, edge_thresh);
 % (it is not guaranteed that the input images are square)
 dvs_output = false(output_l);
 
-[h, w] = size(scale_edges);
-
 r0 = round((output_l - h)/2) + 1;
 c0 = round((output_l - w)/2) + 1;
 
 dvs_output(r0:r0+h-1, c0:c0+w-1) = scale_edges;
-
-% Finally, we make it a binary image
-%dvs_output = dvs_output > 0;
 
 if(plot_output)
     subplot(1, 3, 1)

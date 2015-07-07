@@ -1,5 +1,5 @@
 % Script taking the NUS hand gesture dataset (available here: 
-% http://www.ece.nus.edu.sg/stfpage/elepv/NUS-HandSet/)) and converting all 
+% http://www.ece.nus.edu.sg/stfpage/elepv/NUS-HandSet/) and converting all 
 % the images to DVS-like output.
 %
 % Note: the annotations are not part of the dataset, and they were manually
