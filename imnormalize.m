@@ -1,4 +1,4 @@
-function [output_img] = normalize_image(input_img, new_min, new_max)
+function [output_img] = imnormalize(input_img, new_min, new_max)
 %NORMALIZE_IMGE Normalizes an image, setting its new min and max
 %   If the new range is not specified, it defaults to the maximum range
 %   possible for the type of image.
