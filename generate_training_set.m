@@ -23,7 +23,7 @@ neg_subfolder = setdiff({neg_subfolder.name}, {'.', '..', 'bad_results'});
 block_size = 1000;
 
 % We preallocate memory for the data arrays (optimization):
-training_imgs = zeros(height, width, block_size);
+imgs = zeros(height, width, block_size);
 labels = zeros(2, block_size);
 
 nb_blocks = 1;
@@ -84,12 +84,12 @@ for ii = 1:length(pos_subfolder)
                 img(pos_ind) = 1;
                 img(neg_ind) = 0;
                 
-                training_imgs(:, :, count) = img;
+                imgs(:, :, count) = img;
                 labels(1, count) = 1;
                 
                 count = count + 1
                 if(count > nb_blocks*block_size)
-                    training_imgs = cat(3, training_imgs, zeros(height, width, block_size));
+                    imgs = cat(3, imgs, zeros(height, width, block_size));
                     labels = [labels, zeros(2, block_size)];
                     nb_blocks = nb_blocks + 1;
                 end
@@ -126,13 +126,13 @@ for ii = 1:length(pos_subfolder)
                 img(pos_ind) = 1;
                 img(neg_ind) = 0;
                 
-                training_imgs(:, :, count) = img;
+                imgs(:, :, count) = img;
                 labels(2, count) = 1;
                 
                 count = count+1
                 
                 if(count>nb_blocks*block_size)
-                    training_imgs = cat(3, training_imgs, zeros(height, width, block_size));
+                    imgs = cat(3, imgs, zeros(height, width, block_size));
                     labels = [labels, zeros(2, block_size)];
                     nb_blocks = nb_blocks + 1;
                 end
@@ -146,8 +146,8 @@ end
 
 % We erase the extra elements in the data arrays
 if(count<nb_blocks*block_size)
-    training_imgs(:, :, count:end) = [];
+    imgs(:, :, count:end) = [];
     labels(:, count:end) = [];
 end
 
-save('training_set', 'training_imgs', 'labels')
+save('training_set', 'imgs', 'labels')
