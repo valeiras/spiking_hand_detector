@@ -107,6 +107,7 @@ for pp = 1:length(person)
                     hold on
                     xx = [x_cen-l_2, x_cen+l_2, x_cen+l_2, x_cen-l_2, x_cen-l_2];
                     yy = [y_cen-l_2, y_cen-l_2, y_cen+l_2, y_cen+l_2, y_cen-l_2];
+                    
                     plot(xx, yy, 'r')
                     axis([0 width 0 height])
                     set(gca, 'YDir', 'reverse')
