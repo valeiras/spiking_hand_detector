@@ -13,6 +13,8 @@ t_rng = theano.sandbox.rng_mrg.MRG_RandomStreams()
 
 import dvs_loader
 
+floor_multiple = lambda x, m: int(x / m) * m
+
 
 def relu(x, noise=False):
     return tt.maximum(x, 0)
@@ -20,7 +22,8 @@ def relu(x, noise=False):
 
 
 class Layer(object):
-    def __init__(self, epsW=0.001, epsB=0.002, momW=0.9, momB=0.9, initW=0.0001, initB=0.1, wc=0.0):
+    def __init__(self, epsW=2e-4, epsB=2e-4, momW=0.9, momB=0.9, initW=0.0001, initB=0.1, wc=0.0):
+    # def __init__(self, epsW=0.001, epsB=0.002, momW=0.9, momB=0.9, initW=0.0001, initB=0.1, wc=0.0):
     # def __init__(self, epsW=0.01, epsB=0.02, momW=0.9, momB=0.9, initW=0.0001, initB=0.1, wc=0.0):
         self.epsW = epsW
         self.epsB = epsB
@@ -51,6 +54,9 @@ class Layer(object):
         u[self.dbiases] = self.momB * self.dbiases - self.epsB * grads[self.biases]
         u[self.biases] = self.biases + u[self.dbiases]
         return u
+
+    def check_finite(self):
+        raise NotImplementedError("Subclass must implement 'check_finite'")
 
 
 class ConvLayer(Layer):
@@ -87,19 +93,24 @@ class ConvLayer(Layer):
     def size_out(self):
         return np.prod(self.shape_out)
 
-    def __call__(self, x, batchsize, noise=False):
+    def __call__(self, x, batchsize=None, noise=False):
         from pooling import max_pool_2d, average_pool_2d, power_pool_2d
+        image_shape = ((batchsize,) + self.shape_in
+                       if batchsize is not None else None)
 
         c = tt.nnet.conv.conv2d(
             x, self.weights,
-            image_shape=(batchsize,) + self.shape_in,
-            filter_shape=self.filter_shape)
+            image_shape=image_shape, filter_shape=self.filter_shape)
         t = relu(c + self.biases.dimshuffle(0, 'x', 'x'), noise=noise)
         y = max_pool_2d(t, (self.pooling, self.pooling))
         # y = average_pool_2d(t, (pooling[i], pooling[i]))
         # y = power_pool_2d(t, (pooling[i], pooling[i]), p=2, b=0.001)
 
         return y
+
+    def check_finite(self):
+        return (np.isfinite(self.weights.get_value(borrow=True)).all() and
+                np.isfinite(self.biases.get_value(borrow=True)).all())
 
 
 class FullLayer(Layer):
@@ -130,6 +141,10 @@ class FullLayer(Layer):
         if self.neuron is not None:
             y = self.neuron(y, noise=noise)
         return y
+
+    def check_finite(self):
+        return (np.isfinite(self.weights.get_value(borrow=True)).all() and
+                np.isfinite(self.biases.get_value(borrow=True)).all())
 
 
 class Convnet(object):
@@ -170,17 +185,23 @@ class Convnet(object):
     #     # self.bc = theano.shared(self.bc)
     #     return self
 
-    def get_train(self, batchsize, testsize):
+    def _propup(self, sx, batchsize, noise=False):
+        y = sx
+        for layer in self.layers:
+            y = layer(y, batchsize, noise=noise)
+        return y
+
+    def get_propup(self, batchsize=None):
+        sx = tt.tensor4()
+        y = tt.argmax(self._propup(sx, batchsize, noise=False), axis=1)
+        propup = theano.function([sx], y)
+        return propup
+
+    def get_train(self, batchsize=None, testsize=None):
         sx = tt.tensor4()
         sy = tt.ivector()
 
-        def propup(batchsize, noise=False, dropout=False):
-            y = sx
-            for layer in self.layers:
-                y = layer(y, batchsize, noise=noise)
-            return y
-
-        yc = propup(batchsize, noise=True)
+        yc = self._propup(sx, batchsize, noise=False)
         if 1:
             cost = -tt.log(tt.nnet.softmax(yc))[tt.arange(sy.shape[0]), sy].mean()
         else:
@@ -200,72 +221,117 @@ class Convnet(object):
             [sx, sy], [cost, error], updates=updates)
 
         # --- make test function
-        y_pred = tt.argmax(propup(testsize, noise=False), axis=1)
+        y_pred = tt.argmax(self._propup(sx, testsize, noise=False), axis=1)
         error = tt.mean(tt.neq(y_pred, sy))
         test = theano.function([sx, sy], error)
 
         return train, test
 
 ################################################################################
-[train_x, train_y], [test_x, test_y] = dvs_loader.load_dataset()
-assert train_x.shape[1] == train_x.shape[2]
+if __name__ == '__main__':
 
-train_x = train_x[:, None, :, :].astype(dtype)
-train_y = train_y.astype(np.int32)
-test_x = test_x[:, None, :, :].astype(dtype)
-test_y = test_y.astype(np.int32)
+    [train_x, train_y], [test_x, test_y] = dvs_loader.load_dataset()
+    assert train_x.shape[1] == train_x.shape[2]
 
-batch_size = 100
-n = int(len(train_x) / batch_size) * batch_size
-train_x = train_x[:n]
-train_y = train_y[:n]
-batch_x = train_x.reshape(-1, batch_size, *train_x.shape[1:])
-batch_y = train_y.reshape(-1, batch_size)
+    train_x = train_x[:, None, :, :].astype(dtype)
+    train_y = train_y.astype(np.int32)
+    test_x = test_x[:, None, :, :].astype(dtype)
+    test_y = test_y.astype(np.int32)
 
-test_size = len(test_x)
-test_batch_x = test_x.reshape(-1, test_size, *test_x.shape[1:])
-test_batch_y = test_y.reshape(-1, test_size)
+    batch_size = 100
+    n = floor_multiple(len(train_x), batch_size)
+    train_x, train_y = train_x[:n], train_y[:n]
+    batch_x = train_x.reshape(-1, batch_size, *train_x.shape[1:])
+    batch_y = train_y.reshape(-1, batch_size)
 
-layers = [
-    FullLayer(outputs=2048, initW=0.01, wc=0.004, neuron=relu),
-    FullLayer(outputs=2, initW=0.01, wc=0.004)]
+    test_size = 2000
+    n = floor_multiple(len(test_x), test_size)
+    test_x, test_y = test_x[:n], test_y[:n]
+    test_batch_x = test_x.reshape(-1, test_size, *test_x.shape[1:])
+    test_batch_y = test_y.reshape(-1, test_size)
 
-# layers = [
-#     ConvLayer(filters=32, filter_size=9, pooling=3, initW=0.0001),
-#     ConvLayer(filters=32, filter_size=5, pooling=2, initW=0.01),
-#     FullLayer(outputs=2048, initW=0.01, wc=0.004),
-#     FullLayer(outputs=2, initW=0.1, initB=0., wc=0.01),
-#     ]
+    # layers = [
+    #     FullLayer(outputs=2048, initW=0.01, wc=0.004, neuron=relu),
+    #     FullLayer(outputs=2, initW=0.01, wc=0.004)]
 
-net = Convnet(train_x.shape[1:], layers)
-train, test = net.get_train(batch_size, test_size)
+    layers = [
+        ConvLayer(filters=32, filter_size=9, pooling=3, initW=0.01),
+        # ConvLayer(filters=32, filter_size=5, pooling=2, initW=0.01),
+        # FullLayer(outputs=2048, initW=0.01, wc=0.004, neuron=relu),
+        FullLayer(outputs=2, initW=0.01, initB=0., wc=0.01),
+        ]
 
-print "Starting..."
-n_epochs = 1000
-test_errors = -np.ones(n_epochs)
+    # layers = [
+    #     # ConvLayer(filters=32, filter_size=9, pooling=3, initW=0.0001),
+    #     ConvLayer(filters=32, filter_size=5, pooling=2, initW=0.0001),
+    #     ConvLayer(filters=32, filter_size=5, pooling=2, initW=0.001),
+    #     FullLayer(outputs=2048, initW=0.01, wc=0.004, neuron=relu),
+    #     FullLayer(outputs=2, initW=0.1, initB=0., wc=0.01),
+    #     ]
 
-for epoch in range(n_epochs):
-    cost = 0.0
-    error = 0.0
-    for x, y in zip(batch_x, batch_y):
-        costi, errori = train(x, y)
-        cost += costi
-        error += errori
-    error /= batch_x.shape[0]
+    net = Convnet(train_x.shape[1:], layers)
+    train, test = net.get_train(batch_size, test_size)
 
-    test_errors[epoch] = test(test_batch_x[0], test_batch_y[0])
-    eps = net.layers[0].epsW.get_value().item()
-    print "Epoch %d (eps=%0.1e): %f, %f, %f" % (
-        epoch, eps, cost, error, test_errors[epoch])
+    print "Starting..."
+    n_epochs = 100
+    test_errors = -np.ones(n_epochs)
 
-    # if epoch > 0 and test_errors[epoch] >= test_errors[epoch-1]:
-    #     for layer in net.layers:
-    #         div = np.array(10., dtype=dtype)
-    #         layer.epsW.set_value(layer.epsW.get_value() / div)
-    #         layer.epsB.set_value(layer.epsB.get_value() / div)
+    for epoch in range(n_epochs):
+        cost = 0.0
+        error = 0.0
+        for x, y in zip(batch_x, batch_y):
+            costi, errori = train(x, y)
+            cost += costi
+            error += errori
 
-    #     if any(layer.epsW.get_value() < 1e-8 for layer in net.layers):
-    #         break
+        # check for invalid params
+        for layer in net.layers:
+            assert layer.check_finite()
 
-error = np.mean([test(x, y) for x, y in zip(test_batch_x, test_batch_y)])
-print "Test error: %f" % error
+        error /= batch_x.shape[0]
+
+        test_errors[epoch] = test(test_batch_x[0], test_batch_y[0])
+        eps = net.layers[0].epsW.get_value().item()
+        print "Epoch %d (eps=%0.1e): %f, %f, %f" % (
+            epoch, eps, cost, error, test_errors[epoch])
+
+        # if epoch > 0 and test_errors[epoch] >= test_errors[epoch-1]:
+        #     for layer in net.layers:
+        #         div = np.array(10., dtype=dtype)
+        #         layer.epsW.set_value(layer.epsW.get_value() / div)
+        #         layer.epsB.set_value(layer.epsB.get_value() / div)
+
+        #     if any(layer.epsW.get_value() < 1e-8 for layer in net.layers):
+        #         break
+
+    error = np.mean([test(x, y) for x, y in zip(test_batch_x, test_batch_y)])
+    print "Test error: %f" % error
+
+    # save parameters
+    import datetime
+    import scipy.io.matlab
+    weights = [layer.weights.get_value() for layer in net.layers]
+    biases = [layer.biases.get_value() for layer in net.layers]
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+    savemat = 'convnet_%s.mat' % timestamp
+    scipy.io.matlab.savemat(savemat, dict(weights=weights, biases=biases))
+    print("Saved '%s'" % savemat)
+
+    savenpz = 'convnet_%s.npz' % timestamp
+    np.savez(savenpz, weights=weights, biases=biases)
+    print("Saved '%s'" % savenpz)
+
+    # visualize filters
+    import plotting
+    plt.ion()
+    weights0 = np.array(weights[0])
+    weights0 = weights0[:, 0, :, :]  # remove channel
+    # weights0 = weights0.mean(1)  # remove channel
+    for filt in weights0:
+        filt -= filt.mean()
+        filt /= 2*filt.std()
+
+    plt.figure(1)
+    plt.clf()
+    plotting.tile(weights0, rows=4, cols=8, grid=True)
